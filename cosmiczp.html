@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cosmic Zap - Fireball Challenge</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Orbitron', sans-serif;
+            background-color: #0a0a1a;
+            color: #e0e0ff;
+            overflow: hidden; /* Prevents scrollbars from appearing */
+        }
+        canvas {
+            background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%);
+            display: block;
+            touch-action: none; /* Prevents default touch actions like scrolling */
+        }
+        .ui-element {
+            text-shadow: 0 0 5px #c0c0ff, 0 0 10px #c0c0ff;
+        }
+        .glass-modal {
+            background: rgba(10, 10, 30, 0.6);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .action-button {
+            background: linear-gradient(145deg, #6d28d9, #4c1d95);
+            border: 1px solid #8b5cf6;
+            transition: all 0.3s ease;
+            box-shadow: 0 0 15px rgba(109, 40, 217, 0.5);
+        }
+        .action-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 0 25px rgba(109, 40, 217, 0.8);
+        }
+        .name-input {
+            background-color: rgba(0,0,0,0.3);
+            border: 1px solid #8b5cf6;
+            color: white;
+            text-align: center;
+        }
+        .name-input::placeholder {
+            color: #c4b5fd;
+        }
+        .name-input:focus {
+            outline: none;
+            box-shadow: 0 0 10px #8b5cf6;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center h-screen m-0">
+
+    <!-- Main Game Container -->
+    <div id="game-container" class="relative w-full h-full max-w-4xl max-h-[800px] shadow-2xl shadow-purple-900/50 rounded-lg overflow-hidden">
+        <canvas id="gameCanvas"></canvas>
+
+        <!-- UI Elements -->
+        <div class="absolute top-4 left-4 text-lg md:text-2xl ui-element">
+            <span>SCORE: </span><span id="scoreEl">0</span>
+        </div>
+        <div id="playerNameDisplay" class="absolute top-4 right-4 text-lg md:text-2xl ui-element truncate max-w-[150px] md:max-w-xs"></div>
+
+
+        <!-- Start Game / Game Over Modal -->
+        <div id="modalEl" class="absolute inset-0 flex items-center justify-center">
+            <div class="glass-modal p-6 md:p-10 rounded-xl text-center flex flex-col items-center">
+                <h1 id="modalTitle" class="text-3xl md:text-6xl font-bold ui-element">COSMIC ZAP</h1>
+                <p id="modalScore" class="text-lg md:text-2xl mt-4 ui-element">Final Score: 0</p>
+                <p id="highScoreDisplay" class="text-base md:text-xl mt-2 text-amber-300 ui-element">High Score: 0 by GUEST</p>
+                <p id="modalDescription" class="text-sm md:text-base mt-4 max-w-sm text-purple-200">Dodge the fireballs! Use Arrow Keys or Touch to move, Spacebar or Tap to shoot.</p>
+                <input type="text" id="playerNameInput" placeholder="Enter Your Name" class="name-input w-full max-w-xs p-2 rounded-md mt-6 text-lg" maxlength="15">
+                <button id="startGameBtn" class="action-button text-white font-bold py-3 px-8 rounded-lg mt-6 text-xl md:text-2xl">
+                    START GAME
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM ELEMENTS ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreEl = document.getElementById('scoreEl');
+        const modalEl = document.getElementById('modalEl');
+        const modalScore = document.getElementById('modalScore');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalDescription = document.getElementById('modalDescription');
+        const startGameBtn = document.getElementById('startGameBtn');
+        const playerNameInput = document.getElementById('playerNameInput');
+        const highScoreDisplay = document.getElementById('highScoreDisplay');
+        const playerNameDisplay = document.getElementById('playerNameDisplay');
+
+        // --- GAME STATE & VARIABLES ---
+        let player;
+        let projectiles = [];
+        let enemies = [];
+        let particles = [];
+        let score = 0;
+        let animationId;
+        let enemySpawnInterval;
+        let isGameActive = false;
+        let playerName = 'GUEST';
+        let highScore = 0;
+        let highScoreHolder = 'GUEST';
+        let keys = {
+            ArrowLeft: { pressed: false },
+            ArrowRight: { pressed: false }
+        };
+
+        // --- SOUND SYNTHESIZERS (Tone.js) ---
+        const shootSynth = new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.05, release: 0.1 } }).toDestination();
+        const explosionSynth = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.005, decay: 0.2, sustain: 0 } }).toDestination();
+        const gameOverSynth = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'sine' } }).toDestination();
+        const newHighScoreSynth = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'triangle' } }).toDestination();
+
+
+        // --- UTILITY FUNCTIONS ---
+        function setCanvasSize() {
+            const container = document.getElementById('game-container');
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+        }
+
+        // --- HIGH SCORE FUNCTIONS ---
+        function saveHighScore() {
+            localStorage.setItem('cosmicZapHighScore', highScore);
+            localStorage.setItem('cosmicZapHighScoreHolder', highScoreHolder);
+        }
+
+        function loadHighScore() {
+            const savedScore = localStorage.getItem('cosmicZapHighScore');
+            const savedHolder = localStorage.getItem('cosmicZapHighScoreHolder');
+            if (savedScore) {
+                highScore = parseInt(savedScore, 10);
+                highScoreHolder = savedHolder || 'GUEST';
+            }
+            updateHighScoreDisplay();
+        }
+
+        function updateHighScoreDisplay() {
+            highScoreDisplay.textContent = `High Score: ${highScore} by ${highScoreHolder}`;
+        }
+
+        // --- GAME CLASSES ---
+        class Player {
+            constructor() {
+                this.width = 40;
+                this.height = 20;
+                this.x = canvas.width / 2 - this.width / 2;
+                this.y = canvas.height - this.height - 20;
+                this.velocity = { x: 0, y: 0 };
+                this.speed = 7;
+            }
+
+            draw() {
+                ctx.fillStyle = '#db2777';
+                ctx.beginPath();
+                ctx.moveTo(this.x + this.width / 2, this.y);
+                ctx.lineTo(this.x, this.y + this.height);
+                ctx.lineTo(this.x + this.width, this.y + this.height);
+                ctx.closePath();
+                ctx.fill();
+                ctx.shadowColor = '#f472b6';
+                ctx.shadowBlur = 10;
+            }
+
+            update() {
+                this.x += this.velocity.x;
+                if (this.x < 0) this.x = 0;
+                if (this.x + this.width > canvas.width) this.x = canvas.width - this.width;
+                this.draw();
+            }
+        }
+
+        class Projectile {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 4;
+                this.velocity = { y: -8 };
+                this.color = '#8b5cf6';
+            }
+
+            draw() {
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.shadowColor = '#a78bfa';
+                ctx.shadowBlur = 10;
+            }
+
+            update() {
+                this.y += this.velocity.y;
+                this.draw();
+            }
+        }
+
+        class Enemy { // Now represents a Fireball
+            constructor(x, y, radius, velocity) {
+                this.x = x;
+                this.y = y;
+                this.radius = radius;
+                this.velocity = velocity;
+            }
+
+            draw() {
+                const gradient = ctx.createRadialGradient(this.x, this.y, this.radius * 0.1, this.x, this.y, this.radius);
+                gradient.addColorStop(0, 'rgba(255, 255, 220, 1)');
+                gradient.addColorStop(0.2, 'rgba(255, 200, 0, 1)');
+                gradient.addColorStop(0.6, 'rgba(255, 100, 0, 0.8)');
+                gradient.addColorStop(1, 'rgba(200, 0, 0, 0)');
+
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = gradient;
+                ctx.fill();
+            }
+
+            update() {
+                this.y += this.velocity.y;
+                this.draw();
+            }
+        }
+
+        class Particle {
+            constructor(x, y, radius, velocity) {
+                this.x = x;
+                this.y = y;
+                this.radius = radius;
+                this.velocity = velocity;
+                this.color = `hsl(${Math.random() * 40 + 10}, 100%, 50%)`; // Shades of orange/yellow
+                this.alpha = 1;
+                this.friction = 0.98;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.restore();
+            }
+
+            update() {
+                this.velocity.x *= this.friction;
+                this.velocity.y *= this.friction;
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                this.alpha -= 0.02;
+                this.draw();
+            }
+        }
+        
+        // --- GAME LOGIC ---
+        function init() {
+            playerName = playerNameInput.value.trim() || 'GUEST';
+            playerNameDisplay.textContent = playerName;
+            score = 0;
+            scoreEl.innerHTML = score;
+            player = new Player();
+            projectiles = [];
+            enemies = [];
+            particles = [];
+            isGameActive = true;
+            modalEl.style.display = 'none';
+            spawnEnemies();
+        }
+
+        function spawnEnemies() {
+            const spawnRate = 1000 - (score / 200); // Difficulty increases with score
+            enemySpawnInterval = setTimeout(() => {
+                if (!isGameActive) return;
+                const radius = Math.random() * 20 + 10;
+                const x = Math.random() * (canvas.width - radius * 2) + radius;
+                const y = -radius;
+                const speed = (Math.random() * 1.5 + 1) + (score / 5000); // Speed also increases
+                const velocity = { y: speed };
+                enemies.push(new Enemy(x, y, radius, velocity));
+                spawnEnemies();
+            }, Math.max(250, spawnRate)); // Cap spawn rate
+        }
+
+        function createParticles(enemy) {
+            for (let i = 0; i < enemy.radius * 1.5; i++) {
+                particles.push(new Particle(
+                    enemy.x, enemy.y, Math.random() * 2 + 1,
+                    { x: (Math.random() - 0.5) * (Math.random() * 8), y: (Math.random() - 0.5) * (Math.random() * 8) }
+                ));
+            }
+        }
+
+        function endGame() {
+            isGameActive = false;
+            cancelAnimationFrame(animationId);
+            clearTimeout(enemySpawnInterval);
+
+            // Check for new high score
+            if (score > highScore) {
+                highScore = score;
+                highScoreHolder = playerName;
+                saveHighScore();
+                modalTitle.textContent = 'NEW HIGH SCORE!';
+                const now = Tone.now();
+                newHighScoreSynth.triggerAttackRelease(['C5', 'E5', 'G5', 'C6'], '1n', now);
+            } else {
+                modalTitle.textContent = 'GAME OVER';
+                const now = Tone.now();
+                gameOverSynth.triggerAttackRelease(['C4', 'G3', 'E3', 'C3'], '2n', now);
+            }
+
+            // Show modal
+            updateHighScoreDisplay();
+            modalEl.style.display = 'flex';
+            modalScore.textContent = `Your Score: ${score}`;
+            modalScore.style.display = 'block';
+            modalDescription.style.display = 'block';
+            playerNameInput.style.display = 'block';
+            startGameBtn.textContent = 'PLAY AGAIN';
+        }
+
+        function animate() {
+            animationId = requestAnimationFrame(animate);
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = 'rgba(10, 10, 30, 0.2)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            player.update();
+
+            particles.forEach((p, i) => p.alpha <= 0 ? particles.splice(i, 1) : p.update());
+            projectiles.forEach((p, i) => p.y + p.radius < 0 ? setTimeout(() => projectiles.splice(i, 1), 0) : p.update());
+
+            enemies.forEach((enemy, eIndex) => {
+                enemy.update();
+                const distPlayer = Math.hypot(player.x + player.width / 2 - enemy.x, player.y + player.height / 2 - enemy.y);
+                if (distPlayer - enemy.radius - player.width / 2 < 1) {
+                    endGame();
+                }
+
+                projectiles.forEach((projectile, pIndex) => {
+                    const dist = Math.hypot(projectile.x - enemy.x, projectile.y - enemy.y);
+                    if (dist - enemy.radius - projectile.radius < 1) {
+                        explosionSynth.triggerAttackRelease("8n");
+                        createParticles(enemy);
+                        score += Math.floor(enemy.radius * 5);
+                        scoreEl.innerHTML = score;
+                        setTimeout(() => {
+                            enemies.splice(eIndex, 1);
+                            projectiles.splice(pIndex, 1);
+                        }, 0);
+                    }
+                });
+            });
+        }
+
+        // --- EVENT LISTENERS ---
+        startGameBtn.addEventListener('click', () => {
+            Tone.start();
+            init();
+            animate();
+        });
+
+        window.addEventListener('resize', () => {
+            setCanvasSize();
+            if (isGameActive) {
+               player.x = canvas.width / 2 - player.width / 2;
+               player.y = canvas.height - player.height - 20;
+            }
+        });
+
+        window.addEventListener('keydown', (e) => {
+            if (!isGameActive) return;
+            if (e.key === 'ArrowLeft') { keys.ArrowLeft.pressed = true; player.velocity.x = -player.speed; }
+            if (e.key === 'ArrowRight') { keys.ArrowRight.pressed = true; player.velocity.x = player.speed; }
+            if (e.key === ' ') {
+                projectiles.push(new Projectile(player.x + player.width / 2, player.y));
+                shootSynth.triggerAttackRelease('C5', '8n');
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.key === 'ArrowLeft') { keys.ArrowLeft.pressed = false; if (!keys.ArrowRight.pressed) player.velocity.x = 0; }
+            if (e.key === 'ArrowRight') { keys.ArrowRight.pressed = false; if (!keys.ArrowLeft.pressed) player.velocity.x = 0; }
+        });
+
+        let touchStartX = null;
+        canvas.addEventListener('touchstart', (e) => {
+            if (!isGameActive) return;
+            e.preventDefault();
+            touchStartX = e.touches[0].clientX;
+            projectiles.push(new Projectile(player.x + player.width / 2, player.y));
+            shootSynth.triggerAttackRelease('C5', '8n');
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (!isGameActive || touchStartX === null) return;
+            e.preventDefault();
+            const touchX = e.touches[0].clientX;
+            const rect = canvas.getBoundingClientRect();
+            player.x = touchX - rect.left - player.width / 2;
+            if (player.x < 0) player.x = 0;
+            if (player.x + player.width > canvas.width) player.x = canvas.width - player.width;
+        });
+
+        canvas.addEventListener('touchend', (e) => {
+            if (!isGameActive) return;
+            e.preventDefault();
+            touchStartX = null;
+        });
+
+        // --- INITIAL SETUP ---
+        setCanvasSize();
+        loadHighScore();
+        modalScore.style.display = 'none';
+    </script>
+</body>
+</html>
