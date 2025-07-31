@@ -64,6 +64,11 @@
         </div>
         <div id="playerNameDisplay" class="absolute top-4 right-4 text-lg md:text-2xl ui-element truncate max-w-[150px] md:max-w-xs"></div>
 
+        <!-- Instructions -->
+        <div id="instructions" class="absolute top-12 left-1/2 -translate-x-1/2 text-center text-xs md:text-sm text-purple-300 ui-element opacity-75 pointer-events-none">
+            <p>Move: Arrow Keys / Touch | Shoot: Spacebar / Tap</p>
+        </div>
+
 
         <!-- Start Game / Game Over Modal -->
         <div id="modalEl" class="absolute inset-0 flex items-center justify-center">
@@ -113,8 +118,24 @@
 
         // --- SOUND SYNTHESIZERS (Tone.js) ---
         const shootSynth = new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.05, release: 0.1 } }).toDestination();
-        const explosionSynth = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.005, decay: 0.2, sustain: 0 } }).toDestination();
-        const gameOverSynth = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'sine' } }).toDestination();
+        
+        // A more complex synth for a firework-like explosion sound
+        const fireworkSynth = {
+            boom: new Tone.MembraneSynth({
+                pitchDecay: 0.05,
+                octaves: 10,
+                oscillator: { type: 'sine' },
+                envelope: { attack: 0.001, decay: 0.4, sustain: 0.01, release: 1.4, attackCurve: 'exponential' }
+            }).toDestination(),
+            crackle: new Tone.NoiseSynth({
+                noise: { type: 'white' },
+                envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1 }
+            }).toDestination()
+        };
+        const crackleFilter = new Tone.AutoFilter("16n").toDestination().start();
+        fireworkSynth.crackle.connect(crackleFilter);
+
+
         const newHighScoreSynth = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'triangle' } }).toDestination();
 
 
@@ -311,8 +332,11 @@
                 newHighScoreSynth.triggerAttackRelease(['C5', 'E5', 'G5', 'C6'], '1n', now);
             } else {
                 modalTitle.textContent = 'GAME OVER';
+                // Play a bigger firework sound for game over
                 const now = Tone.now();
-                gameOverSynth.triggerAttackRelease(['C4', 'G3', 'E3', 'C3'], '2n', now);
+                fireworkSynth.boom.triggerAttackRelease("A1", "4n", now);
+                fireworkSynth.crackle.triggerAttackRelease("8n", now + 0.1);
+                fireworkSynth.crackle.triggerAttackRelease("8n", now + 0.2);
             }
 
             // Show modal
@@ -346,7 +370,11 @@
                 projectiles.forEach((projectile, pIndex) => {
                     const dist = Math.hypot(projectile.x - enemy.x, projectile.y - enemy.y);
                     if (dist - enemy.radius - projectile.radius < 1) {
-                        explosionSynth.triggerAttackRelease("8n");
+                        // Play firework sound on hit
+                        const now = Tone.now();
+                        fireworkSynth.boom.triggerAttackRelease("C2", "8n", now);
+                        fireworkSynth.crackle.triggerAttackRelease("16n", now + 0.05);
+
                         createParticles(enemy);
                         score += Math.floor(enemy.radius * 5);
                         scoreEl.innerHTML = score;
@@ -361,6 +389,7 @@
 
         // --- EVENT LISTENERS ---
         startGameBtn.addEventListener('click', () => {
+            // Audio context must be started by a user action
             Tone.start();
             init();
             animate();
@@ -378,7 +407,7 @@
             if (!isGameActive) return;
             if (e.key === 'ArrowLeft') { keys.ArrowLeft.pressed = true; player.velocity.x = -player.speed; }
             if (e.key === 'ArrowRight') { keys.ArrowRight.pressed = true; player.velocity.x = player.speed; }
-            if (e.key === ' ') {
+            if (e.key === ' ') { // Spacebar for shooting
                 projectiles.push(new Projectile(player.x + player.width / 2, player.y));
                 shootSynth.triggerAttackRelease('C5', '8n');
             }
@@ -394,6 +423,7 @@
             if (!isGameActive) return;
             e.preventDefault();
             touchStartX = e.touches[0].clientX;
+            // Tap to shoot
             projectiles.push(new Projectile(player.x + player.width / 2, player.y));
             shootSynth.triggerAttackRelease('C5', '8n');
         });
